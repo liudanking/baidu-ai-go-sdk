@@ -2,7 +2,9 @@ package gosdk
 
 import (
 	"errors"
-	
+	"sync"
+	"time"
+
 	"github.com/imroc/req"
 )
 
@@ -16,15 +18,17 @@ type Authorizer interface {
 }
 
 type Client struct {
-	ClientID     string
-	ClientSecret string
-	AccessToken  string
-	Authorizer   Authorizer
+	ClientID      string
+	ClientSecret  string
+	authMtx       sync.Mutex
+	AccessToken   string
+	TokenExpireAt int64
+	Authorizer    Authorizer
 }
 
 type AuthResponse struct {
 	AccessToken      string `json:"access_token"`  //要获取的Access Token
-	ExpireIn         string `json:"expire_in"`     //Access Token的有效期(秒为单位，一般为1个月)；
+	ExpiresIn        int64  `json:"expires_in"`    //Access Token的有效期(秒为单位，一般为1个月)；
 	RefreshToken     string `json:"refresh_token"` //以下参数忽略，暂时不用
 	Scope            string `json:"scope"`
 	SessionKey       string `json:"session_key"`
@@ -51,16 +55,19 @@ func (da DefaultAuthorizer) Authorize(client *Client) error {
 	if authresponse.ERROR != "" || authresponse.AccessToken == "" {
 		return errors.New("授权失败:" + authresponse.ErrorDescription)
 	}
-	
+
 	client.AccessToken = authresponse.AccessToken
+	client.TokenExpireAt = time.Now().Unix() + authresponse.ExpiresIn
 	return nil
 }
 
 func (client *Client) Auth() error {
-	if client.AccessToken != "" {
+	client.authMtx.Lock()
+	defer client.authMtx.Unlock()
+	if client.AccessToken != "" && client.TokenExpireAt-time.Now().Unix() > 300 {
 		return nil
 	}
-	
+
 	if err := client.Authorizer.Authorize(client); err != nil {
 		return err
 	}
